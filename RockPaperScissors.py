@@ -3,7 +3,7 @@ import random
 from enum import Enum
 import numpy as np
 import logging
-logging.basicConfig(format='%(message)s', level=logging.WARN)
+logging.basicConfig(format='%(message)s', level=logging.ERROR)
 import Strategies
 
 State = Enum('State', ['HUMAN_WINS', 'COMPUTER_WINS', 'TIE'])
@@ -40,11 +40,11 @@ class Rounds:
                     throws.append(r.p1)
         return throws
 
-    def get_throws(self, opponent=True, previous_n_rounds=None):
+    def get_throws(self, player=True, previous_n_rounds=None):
         n = 0 if previous_n_rounds is None else -previous_n_rounds
         throws = []
         for r in self.rounds[n:]:
-            if opponent:
+            if player:
                 throws.append(r.p1)
             else:
                 throws.append(r.p2)
@@ -128,19 +128,19 @@ def evaluate_game(p1, p2):
 
 
 def main(all_rounds):
-    computer = Strategies.SameliaBot(computer=True)  # "computer" / p2
-    comp2 = Strategies.BeatMostFreq(computer=False)  # "human" / p1
+    computer = Strategies.SameliaBot(computer=True, depth=1)  # "computer" / p2
+    comp2 = Strategies.SwitchAfterTwo(computer=False)  # "human" / p1
     import math, time
 
     def loop(all_rounds, max_rounds=math.inf):
         if max_rounds == 0:
             exit()
         # Get Computer Throw
-        # p2_throw = smart_throw(all_rounds)
         p2_throw = computer.throw()
+        # p2_throw = computer.counter_throw(computer.counter_strat(Strategies.BeatMostFreq)['opponent_next_throw'])#computer.throw()
 
         # Get Player Throw
-        p1_throw = None  # comp2.throw()
+        p1_throw = comp2.counter_throw(comp2.counter_strat(Strategies.SameliaBot)['opponent_next_throw'])#computer.throw()
         while p1_throw is None:
             p1_throw = input("What will you Throw? > ")
             p1_throw = validate_throw(p1_throw)
@@ -158,7 +158,7 @@ def main(all_rounds):
 
         loop(all_rounds, max_rounds-1)
 
-    loop(all_rounds)
+    loop(all_rounds, max_rounds=500)
 
 
 if __name__ == "__main__":

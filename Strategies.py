@@ -212,8 +212,6 @@ class StickToWins(Strategy):
         if len(wins) == 0:  # if I haven't won, then throw randomly
             return random.choice(list(Throws)[0:3])  # random throw
 
-        # Program to find most frequent
-        # element in a list
         return self.most_frequent(wins)
 
 
@@ -225,16 +223,26 @@ class ChangeIfLoss(Strategy):
         p1_last_move = self.rounds.rounds[-1].p1
         p2_last_move = self.rounds.rounds[-1].p2
         if self.computer:
-            lost_last = self.rounds.rounds[-1].outcome.value == State['COMPUTER_WINS'].value
+            lost_last = self.rounds.rounds[-1].outcome.value == State['HUMAN_WINS'].value
             last_move = p2_last_move
         else:
-            lost_last = self.rounds.rounds[-1].outcome.value == State['HUMAN_WINS'].value
+            lost_last = self.rounds.rounds[-1].outcome.value == State['COMPUTER_WINS'].value
             last_move = p1_last_move
-        lost_or_tie_last = lost_last or self.rounds.rounds[-1].outcome.value == State['TIE'].value
-        if lost_or_tie_last:
+        if lost_last:
             return self.counter_throw(last_move)
-        # if I didn't lose or tie last round, throw random
-        return random.choice(list(Throws)[0:3])  # random throw
+        # if I didn't lose last round, throw whatever didn't get me the most losses previously
+        if self.computer:
+            losses = self.rounds.get_throws_in_outcome(self.computer, State['HUMAN_WINS'])
+        else:
+            losses = self.rounds.get_throws_in_outcome(self.computer, State['COMPUTER_WINS'])
+        if len(losses) == 0:  # if I haven't lost, then throw randomly
+            return random.choice(list(Throws)[0:3])  # random throw
+
+        dont_throw = self.most_frequent(losses)
+        choices = list(Throws)[0:3]
+        real_choices = [x for x in choices if x.value != dont_throw.value]
+
+        return random.choices(real_choices, k=1)[0]  # random throw
 
 
 class ChangeIfTie(Strategy):
@@ -251,8 +259,13 @@ class ChangeIfTie(Strategy):
         tie_last = self.rounds.rounds[-1].outcome.value == State['TIE'].value
         if tie_last:
             return self.counter_throw(last_move)
-        # if I didn't lose or tie last round, throw random
-        return random.choice(list(Throws)[0:3])  # random throw
+
+        # if I didn't TIE last round, throw whatever didn't get me the most TIES previously
+        ties = self.rounds.get_throws_in_outcome(self.computer, State['TIE'])
+        if len(ties) == 0:  # if I haven't tied, then throw randomly
+            return random.choice(list(Throws)[0:3])  # random throw
+
+        return self.counter_throw(self.most_frequent(ties))
 
 
 class StatisticalStrat(Strategy):
@@ -274,24 +287,31 @@ class BeatMostFreq(Strategy):
             return random.choice(list(Throws)[0:3])  # random throw
         # look at all opponent's throws
         # counteract whatever they throw most often
-        opponent_throws = self.rounds.get_throws(opponent=(not self.computer))
+        opponent_throws = self.rounds.get_throws(player=self.computer)
         return self.counter_throw(self.most_frequent(opponent_throws))
 
 
 class SameliaBot(Strategy):
+    def __init__(self, depth):
+        super().__init__()
+        self.depth = depth
+
     def throw(self):
         copy = self.counter_strat(CopyLast, lookback=10)
         beat_last = self.counter_strat(BeatLast, lookback=10)
         lose_last = self.counter_strat(LoseLast, lookback=10)
-        switch_after_two = self.counter_strat(SwitchAfterTwo, lookback=10)
+        switch_after_two = self.counter_strat(SwitchAfterTwo)
         stick_to_wins = self.counter_strat(StickToWins)
         loss_change = self.counter_strat(ChangeIfLoss)
         tie_change = self.counter_strat(ChangeIfTie)
         statistical = self.counter_strat(StatisticalStrat)
         beat_most_freq = self.counter_strat(BeatMostFreq)
         all_patterns = self.contains_patterns()
+        if self.depth > 0:
+            samelia = self.counter_strat(SameliaBot)
+            self.depth -= 1
 
-        opponent_probability = [0.05, 0, 0.01]  # add tiny bias factors
+        opponent_probability = [0.354, 0.296, 0.350]  # add tiny bias factors
 
         copy_weight = copy['consecutive']
         if copy['consecutive'] > 2:
@@ -308,32 +328,76 @@ class SameliaBot(Strategy):
             logging.warning('STRATEGY DETECTED: BeatLast')
             opponent_probability[beat_last['opponent_next_throw'].value - 1] += beat_last_weight
 
-        switch_after_two_weight = 1 + switch_after_two['consecutive'] * 0.8
+        switch_after_two_bias = 1.5
+        # if last two opponent throws were the same: add bias
+        same_last_move = False
+        if len(self.rounds.rounds) >= 2:
+            p1_last_move = self.rounds.rounds[-1].p1
+            p1_second_last_move = self.rounds.rounds[-2].p1
+            p2_last_move = self.rounds.rounds[-1].p2
+            p2_second_last_move = self.rounds.rounds[-2].p2
+            if self.computer:
+                same_last_move = p1_last_move.value == p1_second_last_move.value
+            else:
+                same_last_move = p2_last_move.value == p2_second_last_move.value
+            if same_last_move:
+                logging.warning('ADDING BIAS: SwitchAfterTwo')
+                opponent_probability[switch_after_two['opponent_next_throw'].value - 1] += switch_after_two_bias
+
+        switch_after_two_weight = 1 + switch_after_two['frequency'] * 1.5
         if switch_after_two['frequency'] > 0.2:
             logging.warning('STRATEGY DETECTED: SwitchAfterTwo')
-            opponent_probability[switch_after_two['opponent_next_throw'].value-1] += switch_after_two_weight
+            if same_last_move:
+                opponent_probability[switch_after_two['opponent_next_throw'].value-1] += switch_after_two_weight
 
         stick_to_wins_weight = 1 + stick_to_wins['frequency']
         if stick_to_wins['frequency'] > 0.6:
             logging.warning('STRATEGY DETECTED: StickToWins')
             opponent_probability[stick_to_wins['opponent_next_throw'].value-1] += stick_to_wins_weight
 
+        stick_to_wins_bias = 1
+        # if opponent has won AT ALL, add bias towards their best winning strat.
+        if self.computer:
+            wins = self.rounds.get_throws_in_outcome((not self.computer), State['HUMAN_WINS'])
+        else:
+            wins = self.rounds.get_throws_in_outcome((not self.computer), State['COMPUTER_WINS'])
+        if len(wins) > 0:  # opponent has won at least once
+            logging.warning('ADDING BIAS: StickToWins')
+            opponent_probability[stick_to_wins['opponent_next_throw'].value - 1] += stick_to_wins_bias
+
         loss_change_weight = 1 + loss_change['frequency']
         if loss_change['frequency'] > 0.6:
             logging.warning('STRATEGY DETECTED: ChangeIfLoss')
             opponent_probability[loss_change['opponent_next_throw'].value-1] += loss_change_weight
+
+        change_if_loss_bias = 1
+        # if opponent has LOST AT ALL, add bias towards their best winning strat.
+        if self.computer:
+            losses = self.rounds.get_throws_in_outcome((not self.computer), State['COMPUTER_WINS'])
+        else:
+            losses = self.rounds.get_throws_in_outcome((not self.computer), State['HUMAN_WINS'])
+        if len(losses) > 0:  # opponent has LOST at least once
+            logging.warning('ADDING BIAS: ChangeIfLoss')
+            opponent_probability[loss_change['opponent_next_throw'].value - 1] += change_if_loss_bias
 
         tie_change_weight = 1 + tie_change['frequency']
         if tie_change['frequency'] > 0.6:
             logging.warning('STRATEGY DETECTED: ChangeIfTie')
             opponent_probability[tie_change['opponent_next_throw'].value - 1] += tie_change_weight
 
+        change_if_tie_bias = 1
+        # if opponent has LOST AT ALL, add bias towards their best winning strat.
+        ties = self.rounds.get_throws_in_outcome((not self.computer), State['TIE'])
+        if len(ties) > 0:  # opponent has TIED at least once
+            logging.warning('ADDING BIAS: ChangeIfTie')
+            opponent_probability[tie_change['opponent_next_throw'].value - 1] += change_if_tie_bias
+
         statistical_weight = 1 + statistical['frequency'] * 0.5
         if statistical['frequency'] > 0.75:
             logging.warning('STRATEGY DETECTED: StatisticalStrat')
             opponent_probability[statistical['opponent_next_throw'].value-1] += statistical_weight
 
-        beat_most_freq_weight = 1 + beat_most_freq['frequency'] * 0.5
+        beat_most_freq_weight = (1 + beat_most_freq['frequency']) * 0.5
         if beat_most_freq['frequency'] > 0.6:
             logging.warning('STRATEGY DETECTED: BeatMostFreq')
             opponent_probability[beat_most_freq['opponent_next_throw'].value - 1] += beat_most_freq_weight
@@ -342,13 +406,13 @@ class SameliaBot(Strategy):
             all_patterns = list(reversed(sorted(all_patterns, key=lambda x: (len(x[0]), x[1]))))
             for p in all_patterns:
                 pattern, consecutive = p
-                pattern_weight = (((1 + consecutive)+((len(pattern)**2)*0.05)) / len(all_patterns)) * 1.5
+                pattern_weight = ((1.25**consecutive) + ((len(pattern)**2)*0.05)) / len(all_patterns)
                 logging.warning(f'STRATEGY DETECTED: Pattern {pattern} : {consecutive}')
                 opponent_next_throw = pattern[0]
                 opponent_probability[opponent_next_throw.value-1] += pattern_weight
 
-        opponent_probability = normalize(opponent_probability)
-        # logging.warning(opponent_probability)
+        # opponent_probability = normalize(opponent_probability)
+        logging.warning(opponent_probability)
         index_max = np.argwhere(opponent_probability == np.amax(opponent_probability))
         opponent_next_throw = list(Throws)[random.choice(index_max)[0]]
         # counter opponent's most likely move
