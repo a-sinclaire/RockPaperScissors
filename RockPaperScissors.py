@@ -69,7 +69,7 @@ class Rounds:
         percent_ties = self.percent_outcome(State['TIE'])
         percent_loss = self.percent_outcome(State['COMPUTER_WINS'])
         ratio = str(f' | Ratio: {percent_wins/percent_loss:.2f}') if percent_loss > 0 else ""
-        print(f'Win: {percent_wins:.2f}% | Lose: {percent_loss:.2f}% | Tie: {percent_ties:.2f}%{ratio}')
+        print(f'Win: {percent_wins:.2f}% | Lose: {percent_loss:.2f}% | Tie: {percent_ties:.2f}%{ratio} | ({len(self.rounds)} Rounds)')
 
 
 class Round:
@@ -128,7 +128,7 @@ def evaluate_game(p1, p2):
 
 
 def main(all_rounds):
-    computer = Strategies.SameliaBot(computer=True, depth=1)  # "computer" / p2
+    computer = Strategies.SameliaBot(computer=True, depth=0)  # "computer" / p2
     comp2 = Strategies.SwitchAfterTwo(computer=False)  # "human" / p1
     import math, time
 
@@ -140,7 +140,8 @@ def main(all_rounds):
         # p2_throw = computer.counter_throw(computer.counter_strat(Strategies.BeatMostFreq)['opponent_next_throw'])#computer.throw()
 
         # Get Player Throw
-        p1_throw = comp2.counter_throw(comp2.counter_strat(Strategies.SameliaBot)['opponent_next_throw'])#computer.throw()
+        # p1_throw = comp2.counter_throw(comp2.counter_strat(Strategies.SameliaBot)['opponent_next_throw'])#computer.throw()
+        p1_throw = None
         while p1_throw is None:
             p1_throw = input("What will you Throw? > ")
             p1_throw = validate_throw(p1_throw)

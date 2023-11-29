@@ -292,7 +292,7 @@ class BeatMostFreq(Strategy):
 
 
 class SameliaBot(Strategy):
-    def __init__(self, depth):
+    def __init__(self, computer=True, rounds=None, depth=0):
         super().__init__()
         self.depth = depth
 
@@ -309,7 +309,6 @@ class SameliaBot(Strategy):
         all_patterns = self.contains_patterns()
         if self.depth > 0:
             samelia = self.counter_strat(SameliaBot)
-            self.depth -= 1
 
         opponent_probability = [0.354, 0.296, 0.350]  # add tiny bias factors
 
@@ -402,6 +401,14 @@ class SameliaBot(Strategy):
             logging.warning('STRATEGY DETECTED: BeatMostFreq')
             opponent_probability[beat_most_freq['opponent_next_throw'].value - 1] += beat_most_freq_weight
 
+        try:
+            samelia_weight = 1
+            if samelia['frequency'] > 0.6:
+                logging.warning('STRATEGY DETECTED: Samelia')
+                opponent_probability[samelia['opponent_next_throw'].value - 1] += samelia_weight
+        except:
+            pass
+
         if len(all_patterns) > 0:
             all_patterns = list(reversed(sorted(all_patterns, key=lambda x: (len(x[0]), x[1]))))
             for p in all_patterns:
@@ -411,10 +418,27 @@ class SameliaBot(Strategy):
                 opponent_next_throw = pattern[0]
                 opponent_probability[opponent_next_throw.value-1] += pattern_weight
 
+        # they know my STRAT!
+        they_know_weight = 2
+        if self.computer:
+            losses = self.rounds.get_throws_in_outcome(self.computer, State['HUMAN_WINS'])
+        else:
+            losses = self.rounds.get_throws_in_outcome(self.computer, State['COMPUTER_WINS'])
+        if len(losses) > 0:  # I have LOST at least once
+            if len(losses)/len(self.rounds.rounds) > 0.6:  # I have lost a LOT
+                logging.warning(f'STRATEGY DETECTED: YOU KNOW >:(')
+                # assume opponent knows my strat and is countering it.
+                # they will play to counter what I plan to throw
+                index_max = np.argwhere(opponent_probability == np.amax(opponent_probability))
+                what_i_think_theyll_throw = list(Throws)[random.choice(index_max)[0]]
+                their_throw = self.counter_throw(self.counter_throw(what_i_think_theyll_throw))
+                opponent_probability[their_throw.value - 1] += they_know_weight
+
         # opponent_probability = normalize(opponent_probability)
         logging.warning(opponent_probability)
         index_max = np.argwhere(opponent_probability == np.amax(opponent_probability))
         opponent_next_throw = list(Throws)[random.choice(index_max)[0]]
+
         # counter opponent's most likely move
         return self.counter_throw(opponent_next_throw)
 
